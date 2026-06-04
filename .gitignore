@@ -1,0 +1,10 @@
+__pycache__/
+*.py[cod]
+*.log
+.ipynb_checkpoints/
+.conda/
+.venv/
+venv/
+env/
+db.sqlite3
+.streamlit/

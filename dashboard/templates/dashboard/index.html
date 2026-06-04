@@ -1,0 +1,242 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Retention Operations Dashboard</title>
+    <link rel="stylesheet" href="{% static 'dashboard/styles.css' %}">
+</head>
+<body>
+    <div class="app-shell">
+        <aside class="sidebar" aria-label="Dashboard navigation">
+            <div class="brand">
+                <span class="brand-mark">R</span>
+                <div>
+                    <strong>Retention Hub</strong>
+                    <span>Telco churn analytics</span>
+                </div>
+            </div>
+
+            <nav class="nav-list">
+                <a class="active" href="#overview">Overview</a>
+                <a href="#risk">Risk analysis</a>
+                <a href="#signals">Model signals</a>
+                <a href="#score">Customer score</a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <span>Model</span>
+                <strong>{{ model_name }}</strong>
+            </div>
+        </aside>
+
+        <div class="main-shell">
+            <header class="topbar">
+                <form class="search-box" role="search">
+                    <span aria-hidden="true"></span>
+                    <input type="search" placeholder="Search customer or segment">
+                </form>
+                <div class="model-status">
+                    <span>Validation</span>
+                    <strong>{{ summary.model_metrics.0.value }} accuracy</strong>
+                </div>
+            </header>
+
+            <main id="overview" class="dashboard">
+                <section class="page-heading">
+                    <div>
+                        <span class="eyebrow">Retention operations</span>
+                        <h1>Customer churn dashboard</h1>
+                        <p>Track churn risk and model signals.</p>
+                    </div>
+                    <a class="export-link" href="#score">Score a customer</a>
+                </section>
+
+                <section class="kpi-grid" aria-label="Key performance indicators">
+                    {% for item in summary.mission_kpis %}
+                    <article class="kpi-card accent-{{ item.accent }}">
+                        <span>{{ item.label }}</span>
+                        <strong>{{ item.value }}</strong>
+                        <small>{{ item.detail }}</small>
+                    </article>
+                    {% endfor %}
+                    <article class="kpi-card accent-amber">
+                        <span>{{ summary.kpis.2.label }}</span>
+                        <strong>{{ summary.kpis.2.value }}</strong>
+                        <small>{{ summary.kpis.2.detail }}</small>
+                    </article>
+                </section>
+
+                <section id="risk" class="analysis-grid">
+                    <article class="panel wide-panel">
+                        <div class="panel-heading">
+                            <div>
+                                <span class="eyebrow">Population risk</span>
+                                <h2>Churn risk distribution</h2>
+                            </div>
+                            <div class="segmented" aria-label="Risk display mode">
+                                <button type="button" class="active">Score</button>
+                                <button type="button">Probability</button>
+                            </div>
+                        </div>
+                        <div class="chart-frame risk-chart">{{ charts.risk_curve|safe }}</div>
+                    </article>
+
+                    <aside class="panel decision-panel">
+                        <div class="panel-heading compact">
+                            <div>
+                                <span class="eyebrow">Current profile</span>
+                                <h2>Prediction summary</h2>
+                            </div>
+                        </div>
+                        <div class="risk-result {{ prediction.risk_class }}">
+                            <span>{{ prediction.risk_level }} risk</span>
+                            <strong>{{ prediction.probability_label }}</strong>
+                            <p>{{ prediction.prediction }}</p>
+                        </div>
+                        <ul class="action-list">
+                            {% for action in prediction.actions %}
+                            <li>{{ action }}</li>
+                            {% endfor %}
+                        </ul>
+                    </aside>
+                </section>
+
+                <section id="signals" class="signals-grid">
+                    <article class="panel">
+                        <div class="panel-heading compact">
+                            <div>
+                                <span class="eyebrow">Model signals</span>
+                                <h2>Feature importance</h2>
+                            </div>
+                        </div>
+                        <div class="feature-list">
+                            {% for driver in summary.top_drivers %}
+                            <div class="feature-row">
+                                <div>
+                                    <span>{{ driver.DisplayName }}</span>
+                                    <strong>{{ driver.ImportanceLabel }}</strong>
+                                </div>
+                                <div class="meter"><span style="width: {{ driver.BarWidth }}"></span></div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </article>
+
+                    <article class="panel">
+                        <div class="panel-heading compact">
+                            <div>
+                                <span class="eyebrow">Segments</span>
+                                <h2>Top churn predictors</h2>
+                            </div>
+                        </div>
+                        <div class="predictor-list">
+                            {% for predictor in summary.top_predictors %}
+                            <div class="predictor-row">
+                                <span>{{ predictor.rank }}</span>
+                                <div>
+                                    <strong>{{ predictor.title }}</strong>
+                                    <p>{{ predictor.body }}</p>
+                                </div>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </article>
+
+                    <article class="panel">
+                        <div class="panel-heading compact">
+                            <div>
+                                <span class="eyebrow">Validation</span>
+                                <h2>Model health</h2>
+                            </div>
+                        </div>
+                        <div class="metric-list">
+                            {% for metric in summary.model_metrics %}
+                            <div>
+                                <span>{{ metric.label }}</span>
+                                <strong>{{ metric.value }}</strong>
+                            </div>
+                            {% endfor %}
+                        </div>
+                    </article>
+                </section>
+
+                <section class="chart-grid">
+                    <article class="panel">{{ charts.by_contract|safe }}</article>
+                    <article class="panel">{{ charts.by_tenure|safe }}</article>
+                    <article class="panel">{{ charts.distribution|safe }}</article>
+                    <article class="panel">{{ charts.comparison|safe }}</article>
+                </section>
+
+                <section id="score" class="panel simulator-panel">
+                    <div class="panel-heading">
+                        <div>
+                            <span class="eyebrow">Customer score</span>
+                            <h2>Retention action simulator</h2>
+                        </div>
+                    </div>
+                    <form method="post" class="customer-form">
+                        {% csrf_token %}
+                        {% for field in form_fields %}
+                        <label class="field field-{{ field.type }}">
+                            <span>{{ field.label }}</span>
+                            {% if field.type == "select" %}
+                                <select name="{{ field.name }}">
+                                    {% for option in field.options %}
+                                    <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.value }}</option>
+                                    {% endfor %}
+                                </select>
+                            {% elif field.type == "checkbox" %}
+                                <input type="checkbox" name="{{ field.name }}" value="1" {% if field.checked %}checked{% endif %}>
+                            {% else %}
+                                <input type="number" name="{{ field.name }}" min="{{ field.min }}" max="{{ field.max }}" step="{{ field.step }}" value="{{ field.value }}">
+                            {% endif %}
+                        </label>
+                        {% endfor %}
+                        <button type="submit">Score customer</button>
+                    </form>
+                </section>
+
+                <details id="customers" class="panel table-panel compact-records">
+                    <summary class="panel-heading">
+                        <div>
+                            <span class="eyebrow">Customer records</span>
+                            <h2>Cleaned Telco sample</h2>
+                        </div>
+                        <span class="summary-action">Show table</span>
+                    </summary>
+                    <div class="table-wrap">
+                        <table>
+                            <thead>
+                                <tr>
+                                    <th>Customer</th>
+                                    <th>Contract</th>
+                                    <th>Internet</th>
+                                    <th>Tenure</th>
+                                    <th>Monthly</th>
+                                    <th>Total</th>
+                                    <th>Churn</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {% for row in sample_records %}
+                                <tr>
+                                    <td>{{ row.customerID }}</td>
+                                    <td>{{ row.Contract }}</td>
+                                    <td>{{ row.InternetService }}</td>
+                                    <td>{{ row.tenure }}</td>
+                                    <td>${{ row.MonthlyCharges }}</td>
+                                    <td>${{ row.TotalCharges }}</td>
+                                    <td><span class="status status-{{ row.Churn|lower }}">{{ row.Churn }}</span></td>
+                                </tr>
+                                {% endfor %}
+                            </tbody>
+                        </table>
+                    </div>
+                </details>
+            </main>
+        </div>
+    </div>
+</body>
+</html>

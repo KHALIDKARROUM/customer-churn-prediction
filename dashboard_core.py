@@ -1,30 +1,23 @@
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import (
-    accuracy_score,
-    confusion_matrix,
-    f1_score,
-    precision_score,
-    recall_score,
-)
-from sklearn.model_selection import train_test_split
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import MinMaxScaler
+
+from model_training import ARTIFACT_VERSION, train_model_artifact
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "Telco-Customer-Churn.csv"
+MODEL_PATH = BASE_DIR / "artifacts" / "churn_model.joblib"
 
-MODEL_NAME = "Random Forest"
 RANDOM_STATE = 42
 
 FEATURE_FIELDS = [
@@ -36,7 +29,7 @@ FEATURE_FIELDS = [
     "PaymentMethod",
 ]
 
-NUMERIC_FIELDS = {"tenure", "MonthlyCharges", "TotalCharges"}
+NUMERIC_FIELDS = ["tenure", "MonthlyCharges", "TotalCharges"]
 
 FIELD_LABELS = {
     "gender": "Gender",
@@ -66,37 +59,6 @@ NUMERIC_LIMITS = {
     "TotalCharges": {"min": 0.0, "max": 9000.0, "step": 0.05},
 }
 
-MODEL_COMPARISON = [
-    {
-        "Model": "Random Forest",
-        "Accuracy": 0.742004,
-        "Precision": 0.509599,
-        "Recall": 0.780749,
-        "F1-score": 0.616684,
-    },
-    {
-        "Model": "XGBoost",
-        "Accuracy": 0.720682,
-        "Precision": 0.484603,
-        "Recall": 0.799465,
-        "F1-score": 0.603431,
-    },
-    {
-        "Model": "Logistic Regression",
-        "Accuracy": 0.717839,
-        "Precision": 0.481481,
-        "Recall": 0.799465,
-        "F1-score": 0.601005,
-    },
-    {
-        "Model": "Gradient Boosting",
-        "Accuracy": 0.787491,
-        "Precision": 0.629758,
-        "Recall": 0.486631,
-        "F1-score": 0.549020,
-    },
-]
-
 MISSION_COLORS = {
     "page": "#f6f8fb",
     "panel": "#ffffff",
@@ -113,6 +75,12 @@ MISSION_COLORS = {
 }
 
 
+class CustomerProfileValidationError(ValueError):
+    def __init__(self, errors: dict[str, str]):
+        self.errors = errors
+        super().__init__("; ".join(f"{field}: {message}" for field, message in errors.items()))
+
+
 def _percent(value: float) -> str:
     return f"{value:.1%}"
 
@@ -123,6 +91,12 @@ def _money(value: float) -> str:
 
 def _format_number(value: float | int) -> str:
     return f"{value:,.0f}"
+
+
+def _risk_thresholds(artifacts: dict[str, Any]) -> tuple[float, float]:
+    moderate = float(np.clip(artifacts.get("decision_threshold", 0.5), 0.1, 0.8))
+    high = float(min(0.95, max(0.65, moderate + 0.2)))
+    return moderate, high
 
 
 def _feature_display_name(name: str) -> str:
@@ -142,18 +116,7 @@ def _darken_figure(
     height: int,
     margin: dict[str, int] | None = None,
 ) -> go.Figure:
-    figure.update_layout(
-        title=(
-            dict(
-                text=title,
-                x=0.02,
-                y=0.96,
-                xanchor="left",
-                font=dict(size=13, color=MISSION_COLORS["text"]),
-            )
-            if title
-            else None
-        ),
+    layout_options: dict[str, Any] = dict(
         paper_bgcolor=MISSION_COLORS["panel"],
         plot_bgcolor=MISSION_COLORS["panel"],
         font=dict(
@@ -176,6 +139,15 @@ def _darken_figure(
             font=dict(size=11),
         ),
     )
+    if title:
+        layout_options["title"] = dict(
+            text=title,
+            x=0.02,
+            y=0.96,
+            xanchor="left",
+            font=dict(size=13, color=MISSION_COLORS["text"]),
+        )
+    figure.update_layout(**layout_options)
     figure.update_xaxes(
         gridcolor=MISSION_COLORS["grid"],
         linecolor=MISSION_COLORS["line"],
@@ -207,103 +179,51 @@ def load_customer_data() -> pd.DataFrame:
 
 
 @lru_cache(maxsize=1)
-def _training_data_cached() -> tuple[pd.DataFrame, pd.Series, list[str]]:
-    data = _clean_data_cached().copy()
-    model_data = data[FEATURE_FIELDS + ["Churn"]].copy()
-    categorical_cols = model_data.select_dtypes(include="object").columns.tolist()
-    categorical_cols.remove("Churn")
-
-    y = (model_data["Churn"] == "Yes").astype(int)
-    x_raw = model_data.drop(columns=["Churn"])
-    x_encoded = pd.get_dummies(
-        x_raw,
-        columns=categorical_cols,
-        drop_first=True,
-        dtype=int,
-    )
-    return x_encoded, y, categorical_cols
+def _data_hash() -> str:
+    return hashlib.sha256(DATA_PATH.read_bytes()).hexdigest()
 
 
 @lru_cache(maxsize=1)
 def get_model_artifacts() -> dict[str, Any]:
-    x_encoded, y, categorical_cols = _training_data_cached()
-    x_train, x_test, y_train, y_test = train_test_split(
-        x_encoded,
-        y,
-        test_size=0.2,
+    expected_hash = _data_hash()
+    if MODEL_PATH.exists():
+        try:
+            artifact = joblib.load(MODEL_PATH)
+            if (
+                artifact.get("artifact_version") == ARTIFACT_VERSION
+                and artifact.get("data_hash") == expected_hash
+                and artifact.get("feature_fields") == FEATURE_FIELDS
+            ):
+                return artifact
+        except (OSError, ValueError, TypeError, KeyError):
+            pass
+
+    # Keep local development usable before train_model.py has been run. The
+    # generated artifact should be used in deployment to avoid startup work.
+    return train_model_artifact(
+        load_customer_data(),
+        FEATURE_FIELDS,
+        NUMERIC_FIELDS,
         random_state=RANDOM_STATE,
-        stratify=y,
+        data_hash=expected_hash,
     )
-
-    pipeline = Pipeline(
-        [
-            ("scaler", MinMaxScaler()),
-            (
-                "model",
-                RandomForestClassifier(
-                    n_estimators=300,
-                    class_weight="balanced",
-                    max_depth=8,
-                    min_samples_leaf=10,
-                    random_state=RANDOM_STATE,
-                    n_jobs=-1,
-                ),
-            ),
-        ]
-    )
-    pipeline.fit(x_train, y_train)
-    predictions = pipeline.predict(x_test)
-
-    metrics = {
-        "Accuracy": accuracy_score(y_test, predictions),
-        "Precision": precision_score(y_test, predictions, zero_division=0),
-        "Recall": recall_score(y_test, predictions, zero_division=0),
-        "F1-score": f1_score(y_test, predictions, zero_division=0),
-    }
-
-    final_estimator = pipeline.named_steps["model"]
-    feature_importance = pd.DataFrame(
-        {
-            "Feature": x_train.columns,
-            "Importance": final_estimator.feature_importances_,
-        }
-    ).sort_values("Importance", ascending=False)
-
-    feature_importance["OriginalFeature"] = feature_importance["Feature"].map(
-        lambda name: _original_feature_name(name, categorical_cols)
-    )
-    grouped_importance = (
-        feature_importance.groupby("OriginalFeature", as_index=False)["Importance"]
-        .sum()
-        .sort_values("Importance", ascending=False)
-    )
-
-    return {
-        "pipeline": pipeline,
-        "feature_columns": x_encoded.columns.tolist(),
-        "categorical_cols": categorical_cols,
-        "metrics": metrics,
-        "confusion_matrix": confusion_matrix(y_test, predictions),
-        "feature_importance": feature_importance,
-        "grouped_importance": grouped_importance,
-    }
 
 
 @lru_cache(maxsize=1)
 def _customer_scores_cached() -> pd.DataFrame:
     data = _clean_data_cached().copy()
     artifacts = get_model_artifacts()
-    encoded = pd.get_dummies(
-        data[FEATURE_FIELDS],
-        columns=artifacts["categorical_cols"],
-        drop_first=True,
-        dtype=int,
-    )
-    encoded = encoded.reindex(columns=artifacts["feature_columns"], fill_value=0)
-    data["RiskScore"] = artifacts["pipeline"].predict_proba(encoded)[:, 1]
+    oof_probabilities = artifacts.get("oof_probabilities")
+    if oof_probabilities is not None and len(oof_probabilities) == len(data):
+        data["RiskScore"] = np.asarray(oof_probabilities)
+    else:
+        data["RiskScore"] = artifacts["pipeline"].predict_proba(
+            data[FEATURE_FIELDS]
+        )[:, 1]
+    moderate_threshold, high_threshold = _risk_thresholds(artifacts)
     data["RiskBand"] = pd.cut(
         data["RiskScore"],
-        bins=[0, 0.35, 0.65, 1],
+        bins=[0, moderate_threshold, high_threshold, 1],
         labels=["Low", "Moderate", "High"],
         include_lowest=True,
     )
@@ -314,16 +234,12 @@ def score_customer_population() -> pd.DataFrame:
     return _customer_scores_cached().copy()
 
 
-def _original_feature_name(encoded_name: str, categorical_cols: list[str]) -> str:
-    for original in categorical_cols:
-        prefix = f"{original}_"
-        if encoded_name.startswith(prefix):
-            return original
-    return encoded_name
-
-
 def get_model_comparison() -> pd.DataFrame:
-    return pd.DataFrame(MODEL_COMPARISON).copy()
+    return get_model_artifacts()["model_comparison"].copy()
+
+
+def get_model_name() -> str:
+    return str(get_model_artifacts()["model_name"])
 
 
 def churn_rate_table(group_col: str) -> pd.DataFrame:
@@ -344,10 +260,11 @@ def get_dashboard_summary() -> dict[str, Any]:
     churn_rate = (data["Churn"] == "Yes").mean()
     churned = data[data["Churn"] == "Yes"]
     retained = data[data["Churn"] == "No"]
-    at_risk = scored[scored["RiskScore"] >= 0.65]
-    if at_risk.empty:
-        at_risk = scored[scored["RiskScore"] >= 0.5]
+    _, high_risk_threshold = _risk_thresholds(artifacts)
+    at_risk = scored[scored["RiskScore"] >= high_risk_threshold]
     accuracy = artifacts["metrics"]["Accuracy"]
+    model_name = str(artifacts["model_name"])
+    majority_baseline = data["Churn"].value_counts(normalize=True).max()
 
     kpis = [
         {
@@ -361,14 +278,14 @@ def get_dashboard_summary() -> dict[str, Any]:
             "detail": f"{_format_number(len(churned))} churned customers",
         },
         {
-            "label": "Monthly revenue at risk",
+            "label": "Historical monthly revenue lost",
             "value": _money(churned["MonthlyCharges"].sum()),
-            "detail": "Among customers marked churned",
+            "detail": "Monthly charges among observed churners",
         },
         {
             "label": "Best model F1",
             "value": _percent(artifacts["metrics"]["F1-score"]),
-            "detail": MODEL_NAME,
+            "detail": model_name,
         },
     ]
 
@@ -376,7 +293,7 @@ def get_dashboard_summary() -> dict[str, Any]:
         {
             "label": "Overall churn rate",
             "value": _percent(churn_rate),
-            "detail": f"{churn_rate - 0.24:+.1%} vs target baseline",
+            "detail": "Observed in the cleaned dataset",
             "accent": "coral",
         },
         {
@@ -388,7 +305,7 @@ def get_dashboard_summary() -> dict[str, Any]:
         {
             "label": "Model accuracy",
             "value": _percent(accuracy),
-            "detail": f"{MODEL_NAME} ensemble",
+            "detail": f"{_percent(majority_baseline)} majority baseline",
             "accent": "green",
         },
     ]
@@ -420,7 +337,10 @@ def get_dashboard_summary() -> dict[str, Any]:
     ]
 
     model_metrics = [
-        {"label": name, "value": _percent(value)}
+        {
+            "label": name,
+            "value": f"{value:.3f}" if name == "Brier score" else _percent(value),
+        }
         for name, value in artifacts["metrics"].items()
     ]
 
@@ -476,6 +396,8 @@ def get_dashboard_summary() -> dict[str, Any]:
         "top_drivers": top_drivers,
         "top_predictors": top_predictors,
         "confusion_matrix": artifacts["confusion_matrix"].tolist(),
+        "model_name": model_name,
+        "decision_threshold": artifacts["decision_threshold"],
     }
 
 
@@ -483,6 +405,7 @@ def build_plotly_figures() -> dict[str, go.Figure]:
     data = load_customer_data()
     scored = score_customer_population()
     artifacts = get_model_artifacts()
+    model_name = str(artifacts["model_name"])
 
     ranked_scores = scored.sort_values("RiskScore").reset_index(drop=True)
     ranked_scores["Bucket"] = pd.qcut(
@@ -662,7 +585,7 @@ def build_plotly_figures() -> dict[str, go.Figure]:
     drivers.update_yaxes(title="")
     _darken_figure(
         drivers,
-        f"Top churn drivers - {MODEL_NAME}",
+        f"Top churn drivers - {model_name}",
         height=390,
         margin=dict(l=40, r=20, t=54, b=42),
     )
@@ -685,7 +608,7 @@ def build_plotly_figures() -> dict[str, go.Figure]:
     comparison_fig.update_traces(textposition="outside", cliponaxis=False)
     _darken_figure(
         comparison_fig,
-        "Notebook model comparison",
+        "Training CV model comparison",
         height=330,
         margin=dict(l=40, r=28, t=54, b=42),
     )
@@ -763,39 +686,51 @@ def default_customer_profile() -> dict[str, Any]:
 
 def coerce_customer_profile(profile: dict[str, Any]) -> dict[str, Any]:
     defaults = {
-        "gender": "Female",
-        "SeniorCitizen": 0,
-        "Partner": "No",
-        "Dependents": "No",
         "tenure": 1,
-        "PhoneService": "Yes",
-        "MultipleLines": "No",
         "InternetService": "Fiber optic",
-        "OnlineSecurity": "No",
-        "OnlineBackup": "No",
-        "DeviceProtection": "No",
-        "TechSupport": "No",
-        "StreamingTV": "No",
-        "StreamingMovies": "No",
         "Contract": "Month-to-month",
-        "PaperlessBilling": "Yes",
         "PaymentMethod": "Electronic check",
         "MonthlyCharges": 80.0,
         "TotalCharges": 80.0,
     }
     merged = {**defaults, **profile}
     coerced: dict[str, Any] = {}
+    errors: dict[str, str] = {}
+    data = _clean_data_cached()
 
     for field in FEATURE_FIELDS:
         value = merged[field]
-        if field == "SeniorCitizen":
-            coerced[field] = int(bool(int(value))) if str(value).strip() else 0
-        elif field == "tenure":
-            coerced[field] = int(float(value))
-        elif field in {"MonthlyCharges", "TotalCharges"}:
-            coerced[field] = float(value)
-        else:
-            coerced[field] = str(value)
+        if field in NUMERIC_FIELDS:
+            try:
+                number = float(value)
+            except (TypeError, ValueError):
+                errors[field] = "must be a number"
+                continue
+            if not np.isfinite(number):
+                errors[field] = "must be finite"
+                continue
+            limits = NUMERIC_LIMITS[field]
+            if not limits["min"] <= number <= limits["max"]:
+                errors[field] = f"must be between {limits['min']} and {limits['max']}"
+                continue
+            if field == "tenure":
+                if not number.is_integer():
+                    errors[field] = "must be a whole number of months"
+                    continue
+                coerced[field] = int(number)
+            else:
+                coerced[field] = number
+            continue
+
+        text_value = str(value).strip()
+        allowed = set(data[field].dropna().astype(str).unique())
+        if text_value not in allowed:
+            errors[field] = "is not a recognized option"
+            continue
+        coerced[field] = text_value
+
+    if errors:
+        raise CustomerProfileValidationError(errors)
 
     return coerced
 
@@ -806,17 +741,6 @@ def field_definitions(profile: dict[str, Any] | None = None) -> list[dict[str, A
     fields = []
 
     for field in FEATURE_FIELDS:
-        if field == "SeniorCitizen":
-            fields.append(
-                {
-                    "name": field,
-                    "label": FIELD_LABELS[field],
-                    "type": "checkbox",
-                    "checked": bool(profile[field]),
-                }
-            )
-            continue
-
         if field in NUMERIC_LIMITS:
             limits = NUMERIC_LIMITS[field]
             fields.append(
@@ -853,18 +777,18 @@ def field_definitions(profile: dict[str, Any] | None = None) -> list[dict[str, A
 def predict_churn(profile: dict[str, Any]) -> dict[str, Any]:
     profile = coerce_customer_profile(profile)
     artifacts = get_model_artifacts()
-    row = pd.DataFrame([profile])
-    encoded = pd.get_dummies(
-        row,
-        columns=artifacts["categorical_cols"],
-        drop_first=True,
-        dtype=int,
+    row = pd.DataFrame([profile], columns=FEATURE_FIELDS)
+    probability = artifacts["pipeline"].predict_proba(row)[0, 1]
+    decision_threshold = float(artifacts.get("decision_threshold", 0.5))
+    predicted = probability >= decision_threshold
+    moderate_threshold, high_threshold = _risk_thresholds(artifacts)
+    risk_level = (
+        "High"
+        if probability >= high_threshold
+        else "Moderate"
+        if probability >= moderate_threshold
+        else "Low"
     )
-    encoded = encoded.reindex(columns=artifacts["feature_columns"], fill_value=0)
-
-    probability = artifacts["pipeline"].predict_proba(encoded)[0, 1]
-    predicted = probability >= 0.5
-    risk_level = "High" if probability >= 0.65 else "Moderate" if probability >= 0.35 else "Low"
 
     return {
         "profile": profile,
@@ -873,6 +797,7 @@ def predict_churn(profile: dict[str, Any]) -> dict[str, Any]:
         "prediction": "Churn likely" if predicted else "Likely retained",
         "risk_level": risk_level,
         "risk_class": risk_level.lower(),
+        "decision_threshold": decision_threshold,
         "actions": retention_actions(profile, probability),
     }
 
@@ -904,10 +829,7 @@ def profile_from_mapping(values: dict[str, Any]) -> dict[str, Any]:
     defaults = default_customer_profile()
 
     for field in FEATURE_FIELDS:
-        if field == "SeniorCitizen":
-            profile[field] = 1 if str(values.get(field, "0")) in {"1", "true", "True", "on"} else 0
-        else:
-            profile[field] = values.get(field, defaults[field])
+        profile[field] = values.get(field, defaults[field])
 
     return coerce_customer_profile(profile)
 

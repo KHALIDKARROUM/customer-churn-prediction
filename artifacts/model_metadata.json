@@ -1,0 +1,45 @@
+{
+  "artifact_version": 2,
+  "trained_at_utc": "2026-06-28T16:23:01.921201+00:00",
+  "sklearn_version": "1.7.2",
+  "data_hash": "88be4b93fbe0cc83421af1c503794c97c342eca914c1576db7c276e61d61358a",
+  "model_name": "Random Forest",
+  "model_selection": "Highest mean 5-fold training-set CV F1",
+  "decision_threshold": 0.2860109992501851,
+  "holdout_size": 1407,
+  "metrics": {
+    "Accuracy": 0.7476901208244492,
+    "Precision": 0.516994633273703,
+    "Recall": 0.7727272727272727,
+    "F1-score": 0.6195069667738478,
+    "ROC-AUC": 0.8389458044944635,
+    "PR-AUC": 0.641825792562193,
+    "Brier score": 0.1389258747352999
+  },
+  "model_comparison": [
+    {
+      "Model": "Random Forest",
+      "Accuracy": 0.7630222222222223,
+      "Precision": 0.536862462251318,
+      "Recall": 0.788628762541806,
+      "F1-score": 0.6388192142292544,
+      "F1 std": 0.010593372975142751
+    },
+    {
+      "Model": "Logistic Regression",
+      "Accuracy": 0.7424,
+      "Precision": 0.5097508640149663,
+      "Recall": 0.8133779264214047,
+      "F1-score": 0.626643705958687,
+      "F1 std": 0.009090757506828135
+    },
+    {
+      "Model": "Gradient Boosting",
+      "Accuracy": 0.792888888888889,
+      "Precision": 0.6415476950873085,
+      "Recall": 0.5036789297658862,
+      "F1-score": 0.5636315825671868,
+      "F1 std": 0.011499455027455684
+    }
+  ]
+}

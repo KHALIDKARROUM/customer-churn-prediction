@@ -33,10 +33,10 @@
 
         <div class="main-shell">
             <header class="topbar">
-                <form class="search-box" role="search">
+                <div class="search-box" role="search">
                     <span aria-hidden="true"></span>
-                    <input type="search" placeholder="Search customer or segment">
-                </form>
+                    <input id="customer-search" type="search" placeholder="Filter customer records" aria-label="Filter customer records">
+                </div>
                 <div class="model-status">
                     <span>Validation</span>
                     <strong>{{ summary.model_metrics.0.value }} accuracy</strong>
@@ -74,10 +74,6 @@
                             <div>
                                 <span class="eyebrow">Population risk</span>
                                 <h2>Churn risk distribution</h2>
-                            </div>
-                            <div class="segmented" aria-label="Risk display mode">
-                                <button type="button" class="active">Score</button>
-                                <button type="button">Probability</button>
                             </div>
                         </div>
                         <div class="chart-frame risk-chart">{{ charts.risk_curve|safe }}</div>
@@ -176,6 +172,9 @@
                             <h2>Retention action simulator</h2>
                         </div>
                     </div>
+                    {% if form_error %}
+                    <p class="form-error" role="alert">{{ form_error }}</p>
+                    {% endif %}
                     <form method="post" class="customer-form">
                         {% csrf_token %}
                         {% for field in form_fields %}
@@ -221,7 +220,7 @@
                             </thead>
                             <tbody>
                                 {% for row in sample_records %}
-                                <tr>
+                                <tr class="customer-row">
                                     <td>{{ row.customerID }}</td>
                                     <td>{{ row.Contract }}</td>
                                     <td>{{ row.InternetService }}</td>
@@ -238,5 +237,18 @@
             </main>
         </div>
     </div>
+    <script>
+        const searchInput = document.getElementById("customer-search");
+        const customerRows = Array.from(document.querySelectorAll(".customer-row"));
+        searchInput.addEventListener("input", () => {
+            const query = searchInput.value.trim().toLowerCase();
+            customerRows.forEach((row) => {
+                row.hidden = query !== "" && !row.textContent.toLowerCase().includes(query);
+            });
+            if (query) {
+                document.getElementById("customers").open = true;
+            }
+        });
+    </script>
 </body>
 </html>

@@ -47,6 +47,17 @@ st.markdown(
     section[data-testid="stSidebar"] {
         background: var(--surface);
         border-right: 1px solid var(--line);
+        color: var(--ink);
+    }
+
+    section[data-testid="stSidebar"] label,
+    section[data-testid="stSidebar"] p,
+    section[data-testid="stSidebar"] strong {
+        color: var(--ink);
+    }
+
+    section[data-testid="stSidebar"] .side-brand span:not(.brand-mark) {
+        color: var(--muted);
     }
 
     div[data-testid="stSidebarHeader"] {
@@ -463,22 +474,27 @@ def _load_data() -> pd.DataFrame:
     return core.load_customer_data()
 
 
+def _compact_html(value: str) -> str:
+    """Prevent indented HTML fragments from becoming Markdown code blocks."""
+    return "".join(line.strip() for line in value.splitlines())
+
+
 def _kpi_card(item: dict[str, str], accent: str | None = None) -> str:
     accent_class = escape(accent or item.get("accent", ""))
-    return f"""
+    return _compact_html(f"""
     <div class="kpi-card {accent_class}">
         <span>{escape(item["label"])}</span>
         <strong>{escape(item["value"])}</strong>
         <small>{escape(item["detail"])}</small>
     </div>
-    """
+    """)
 
 
 def _decision_panel(prediction: dict[str, object]) -> str:
     actions = "".join(
         f"<li>{escape(action)}</li>" for action in prediction["actions"]
     )
-    return f"""
+    return _compact_html(f"""
     <div class="html-panel decision">
         <div class="panel-heading">
             <div>
@@ -493,14 +509,14 @@ def _decision_panel(prediction: dict[str, object]) -> str:
         </div>
         <ul class="action-list">{actions}</ul>
     </div>
-    """
+    """)
 
 
 def _feature_panel(summary: dict[str, object]) -> str:
     rows = []
     for driver in summary["top_drivers"]:
         rows.append(
-            f"""
+            _compact_html(f"""
             <div class="feature-row">
                 <div class="feature-meta">
                     <span>{escape(driver["DisplayName"])}</span>
@@ -508,9 +524,9 @@ def _feature_panel(summary: dict[str, object]) -> str:
                 </div>
                 <div class="meter"><span style="width: {escape(driver["BarWidth"])}"></span></div>
             </div>
-            """
+            """)
         )
-    return f"""
+    return _compact_html(f"""
     <div class="html-panel">
         <div class="panel-heading">
             <div>
@@ -520,14 +536,14 @@ def _feature_panel(summary: dict[str, object]) -> str:
         </div>
         <div class="feature-list">{''.join(rows)}</div>
     </div>
-    """
+    """)
 
 
 def _predictor_panel(summary: dict[str, object]) -> str:
     rows = []
     for predictor in summary["top_predictors"]:
         rows.append(
-            f"""
+            _compact_html(f"""
             <div class="predictor-row">
                 <span class="rank">{predictor["rank"]}</span>
                 <div>
@@ -535,9 +551,9 @@ def _predictor_panel(summary: dict[str, object]) -> str:
                     <p>{escape(predictor["body"])}</p>
                 </div>
             </div>
-            """
+            """)
         )
-    return f"""
+    return _compact_html(f"""
     <div class="html-panel">
         <div class="panel-heading">
             <div>
@@ -547,21 +563,21 @@ def _predictor_panel(summary: dict[str, object]) -> str:
         </div>
         <div class="predictor-list">{''.join(rows)}</div>
     </div>
-    """
+    """)
 
 
 def _model_panel(summary: dict[str, object]) -> str:
     rows = []
     for metric in summary["model_metrics"]:
         rows.append(
-            f"""
+            _compact_html(f"""
             <div class="model-metric">
                 <span>{escape(metric["label"])}</span>
                 <strong>{escape(metric["value"])}</strong>
             </div>
-            """
+            """)
         )
-    return f"""
+    return _compact_html(f"""
     <div class="html-panel">
         <div class="panel-heading">
             <div>
@@ -571,7 +587,7 @@ def _model_panel(summary: dict[str, object]) -> str:
         </div>
         <div class="model-grid">{''.join(rows)}</div>
     </div>
-    """
+    """)
 
 
 data = _load_data()
@@ -598,13 +614,12 @@ with st.sidebar:
         ["Overview", "Risk analysis", "Model signals", "Customer score"],
         label_visibility="collapsed",
     )
-    st.caption(f"Model: {core.MODEL_NAME}")
+    st.caption(f"Model: {core.get_model_name()}")
 
 st.markdown(
     f"""
     <div class="topbar">
         <h1>Retention Operations Dashboard</h1>
-        <div class="search-shell">Search customer or segment</div>
         <div class="model-badge">
             <span>Validation</span>
             <strong>{escape(summary["model_metrics"][0]["value"])} accuracy</strong>
@@ -644,7 +659,6 @@ with left:
                     <span class="eyebrow">Population risk</span>
                     <h3>Churn risk distribution</h3>
                 </div>
-                <div class="segmented"><span>Score</span><span>Probability</span></div>
             </div>
         </div>
         """,
@@ -740,18 +754,28 @@ for action in prediction["actions"]:
     score_cols[2].write(f"- {action}")
 
 with st.expander("Customer records", expanded=False):
+    customer_columns = [
+        "customerID",
+        "Contract",
+        "InternetService",
+        "tenure",
+        "MonthlyCharges",
+        "TotalCharges",
+        "Churn",
+    ]
+    customer_table = data[customer_columns]
+    customer_filter = st.text_input("Filter customer records")
+    if customer_filter:
+        matching_rows = customer_table.astype(str).apply(
+            lambda column: column.str.contains(
+                customer_filter,
+                case=False,
+                regex=False,
+            )
+        ).any(axis=1)
+        customer_table = customer_table.loc[matching_rows]
     st.dataframe(
-        data[
-            [
-                "customerID",
-                "Contract",
-                "InternetService",
-                "tenure",
-                "MonthlyCharges",
-                "TotalCharges",
-                "Churn",
-            ]
-        ],
+        customer_table,
         width="stretch",
         hide_index=True,
     )

@@ -386,9 +386,23 @@ select {
     min-height: 470px;
 }
 
+.chart-note {
+    color: var(--muted);
+    font-size: 0.85rem;
+    line-height: 1.5;
+    padding: 0 18px 18px;
+}
+
 .decision-panel {
     display: grid;
     align-content: start;
+}
+
+.score-intro p,
+.score-pending {
+    color: var(--muted);
+    line-height: 1.55;
+    padding: 18px;
 }
 
 .risk-result {
@@ -555,6 +569,17 @@ select {
     min-width: 0;
 }
 
+.field.has-error input,
+.field.has-error select {
+    border-color: #be123c;
+}
+
+.field-error {
+    color: #be123c;
+    font-size: 0.8rem;
+    font-weight: 700;
+}
+
 select,
 input[type="number"] {
     appearance: none;
@@ -603,6 +628,81 @@ input[type="checkbox"] {
 
 .customer-form button:hover {
     background: #1d4ed8;
+}
+
+.score-output {
+    border-top: 1px solid var(--line);
+    display: grid;
+    grid-template-columns: minmax(0, 220px) minmax(0, 1fr);
+}
+
+.score-result {
+    border-right: 1px solid var(--line);
+    padding: 20px 18px;
+}
+
+.score-result span {
+    color: var(--coral);
+    font-size: 0.86rem;
+    font-weight: 900;
+    text-transform: uppercase;
+}
+
+.score-result.moderate span {
+    color: var(--amber);
+}
+
+.score-result.low span {
+    color: var(--green);
+}
+
+.score-result strong {
+    display: block;
+    font-size: 2.5rem;
+    line-height: 1;
+    margin: 10px 0;
+}
+
+.score-result p {
+    color: var(--muted);
+    font-weight: 750;
+}
+
+.score-actions h3 {
+    font-size: 0.95rem;
+    margin: 18px 18px 0;
+}
+
+.score-actions .action-list {
+    padding-top: 12px;
+}
+
+.model-unavailable {
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    box-shadow: var(--shadow);
+    margin: min(15vh, 140px) auto;
+    max-width: 680px;
+    padding: 32px;
+}
+
+.model-unavailable h1 {
+    margin-top: 10px;
+}
+
+.model-unavailable p {
+    color: var(--muted);
+    line-height: 1.6;
+    margin: 14px 0;
+}
+
+.model-unavailable code {
+    background: var(--surface-soft);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    display: inline-block;
+    padding: 8px 10px;
 }
 
 .table-wrap {
@@ -705,7 +805,8 @@ td {
 
     .kpi-grid,
     .chart-grid,
-    .customer-form {
+    .customer-form,
+    .score-output {
         grid-template-columns: repeat(2, minmax(0, 1fr));
     }
 }
@@ -744,8 +845,14 @@ td {
     .nav-list,
     .kpi-grid,
     .chart-grid,
-    .customer-form {
+    .customer-form,
+    .score-output {
         grid-template-columns: 1fr;
+    }
+
+    .score-result {
+        border-bottom: 1px solid var(--line);
+        border-right: 0;
     }
 
     .panel-heading {

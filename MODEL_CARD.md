@@ -14,7 +14,11 @@ The dataset does not specify an as-of date or future outcome window. Consequentl
 
 Candidate selection uses five-fold cross-validation on the training partition only. The selected classifier is sigmoid-calibrated, its decision threshold is derived from training-only out-of-fold predictions, and final metrics are calculated once on a stratified 20% holdout. `artifacts/model_metadata.json` contains the current generated results.
 
+Each generated artifact is accompanied by a metadata file with its checksum, dataset hash, training-code hash, git revision, training-run ID, and Python package versions. Scoring requires both files to agree and the serving environment's compatible Python major/minor version and exact model-library versions to match the saved record. Regenerate the model from the hash-checked dependency lock before deployment.
+
 Population charts use out-of-fold probabilities so that records are not displayed with scores from a model that trained on those same records.
+
+The population-risk curve and at-risk count are restricted to customers recorded as `Churn=No`; already-churned customers are excluded from this demonstration cohort. Both use the same displayed high-risk threshold as individual scoring, with scores equal to the threshold included. The chart's shaded share is calculated from those exact scores. This historical cohort is not a verified current customer list and the scores do not establish a future prediction horizon.
 
 ## Important limitations
 

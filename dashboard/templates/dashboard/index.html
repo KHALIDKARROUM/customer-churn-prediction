@@ -6,6 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Retention Operations Dashboard</title>
     <link rel="stylesheet" href="{% static 'dashboard/styles.css' %}">
+    <script src="{% static 'plotly/plotly.min.js' %}"></script>
 </head>
 <body>
     <div class="app-shell">
@@ -72,30 +73,22 @@
                     <article class="panel wide-panel">
                         <div class="panel-heading">
                             <div>
-                                <span class="eyebrow">Population risk</span>
-                                <h2>Churn risk distribution</h2>
+                                <span class="eyebrow">Historical customer risk</span>
+                                <h2>Risk among non-churned customers</h2>
                             </div>
                         </div>
                         <div class="chart-frame risk-chart">{{ charts.risk_curve|safe }}</div>
+                        <p class="chart-note">{{ summary.population_risk_note }}</p>
                     </article>
 
-                    <aside class="panel decision-panel">
+                    <aside class="panel decision-panel score-intro">
                         <div class="panel-heading compact">
                             <div>
-                                <span class="eyebrow">Current profile</span>
-                                <h2>Prediction summary</h2>
+                                <span class="eyebrow">Customer scoring</span>
+                                <h2>Score a customer</h2>
                             </div>
                         </div>
-                        <div class="risk-result {{ prediction.risk_class }}">
-                            <span>{{ prediction.risk_level }} risk</span>
-                            <strong>{{ prediction.probability_label }}</strong>
-                            <p>{{ prediction.prediction }}</p>
-                        </div>
-                        <ul class="action-list">
-                            {% for action in prediction.actions %}
-                            <li>{{ action }}</li>
-                            {% endfor %}
-                        </ul>
+                        <p>Enter the customer details below to get one validated score and suggested follow-up actions.</p>
                     </aside>
                 </section>
 
@@ -165,37 +158,7 @@
                     <article class="panel">{{ charts.comparison|safe }}</article>
                 </section>
 
-                <section id="score" class="panel simulator-panel">
-                    <div class="panel-heading">
-                        <div>
-                            <span class="eyebrow">Customer score</span>
-                            <h2>Retention action simulator</h2>
-                        </div>
-                    </div>
-                    {% if form_error %}
-                    <p class="form-error" role="alert">{{ form_error }}</p>
-                    {% endif %}
-                    <form method="post" class="customer-form">
-                        {% csrf_token %}
-                        {% for field in form_fields %}
-                        <label class="field field-{{ field.type }}">
-                            <span>{{ field.label }}</span>
-                            {% if field.type == "select" %}
-                                <select name="{{ field.name }}">
-                                    {% for option in field.options %}
-                                    <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.value }}</option>
-                                    {% endfor %}
-                                </select>
-                            {% elif field.type == "checkbox" %}
-                                <input type="checkbox" name="{{ field.name }}" value="1" {% if field.checked %}checked{% endif %}>
-                            {% else %}
-                                <input type="number" name="{{ field.name }}" min="{{ field.min }}" max="{{ field.max }}" step="{{ field.step }}" value="{{ field.value }}">
-                            {% endif %}
-                        </label>
-                        {% endfor %}
-                        <button type="submit">Score customer</button>
-                    </form>
-                </section>
+                {% include "dashboard/_score_panel.html" %}
 
                 <details id="customers" class="panel table-panel compact-records">
                     <summary class="panel-heading">
@@ -248,6 +211,22 @@
             if (query) {
                 document.getElementById("customers").open = true;
             }
+        });
+
+        document.addEventListener("submit", async (event) => {
+            const form = event.target.closest("[data-score-form]");
+            if (!form || !window.fetch) {
+                return;
+            }
+            event.preventDefault();
+            const response = await fetch(form.action, {
+                method: "POST",
+                body: new FormData(form),
+                headers: {"X-Requested-With": "XMLHttpRequest"},
+            });
+            const panel = document.getElementById("score");
+            panel.outerHTML = await response.text();
+            document.getElementById("score").scrollIntoView({behavior: "smooth", block: "nearest"});
         });
     </script>
 </body>

@@ -1,0 +1,18 @@
+{% load static %}
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Model unavailable</title>
+    <link rel="stylesheet" href="{% static 'dashboard/styles.css' %}">
+</head>
+<body>
+    <main class="model-unavailable">
+        <span class="eyebrow">Dashboard unavailable</span>
+        <h1>A validated model is required</h1>
+        <p>{{ model_error }}</p>
+        <code>python train_model.py</code>
+    </main>
+</body>
+</html>

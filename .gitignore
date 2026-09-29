@@ -13,3 +13,4 @@ db.sqlite3
 htmlcov/
 staticfiles/
 artifacts/*.joblib
+artifacts/*.tmp

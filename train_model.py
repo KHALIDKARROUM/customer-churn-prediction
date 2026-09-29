@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
+import subprocess
+from uuid import uuid4
 
 import joblib
 import numpy as np
@@ -31,6 +34,36 @@ def data_file_hash() -> str:
     return hashlib.sha256(DATA_PATH.read_bytes()).hexdigest()
 
 
+def file_hash(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def training_code_hash() -> str:
+    digest = hashlib.sha256()
+    for path in (BASE_DIR / "model_training.py", BASE_DIR / "train_model.py"):
+        digest.update(path.name.encode("utf-8"))
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def git_revision() -> str | None:
+    try:
+        return subprocess.check_output(
+            ["git", "rev-parse", "HEAD"],
+            cwd=BASE_DIR,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+
+
+def write_json_atomically(path: Path, payload: dict[str, object]) -> None:
+    temporary_path = path.with_suffix(path.suffix + ".tmp")
+    temporary_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+    os.replace(temporary_path, path)
+
+
 def load_training_data() -> pd.DataFrame:
     data = pd.read_csv(DATA_PATH)
     data["TotalCharges"] = pd.to_numeric(
@@ -48,14 +81,24 @@ def main() -> None:
         NUMERIC_FIELDS,
         random_state=42,
         data_hash=data_hash,
+        training_code_hash=training_code_hash(),
+        git_revision=git_revision(),
+        training_run_id=uuid4().hex,
     )
     ARTIFACT_DIR.mkdir(parents=True, exist_ok=True)
-    joblib.dump(artifact, MODEL_PATH, compress=3)
+    temporary_model_path = MODEL_PATH.with_suffix(MODEL_PATH.suffix + ".tmp")
+    joblib.dump(artifact, temporary_model_path, compress=3)
+    os.replace(temporary_model_path, MODEL_PATH)
 
     metadata = {
         "artifact_version": artifact["artifact_version"],
         "trained_at_utc": artifact["trained_at_utc"],
         "sklearn_version": artifact["sklearn_version"],
+        "runtime_environment": artifact["runtime_environment"],
+        "training_code_hash": artifact["training_code_hash"],
+        "git_revision": artifact["git_revision"],
+        "training_run_id": artifact["training_run_id"],
+        "artifact_sha256": file_hash(MODEL_PATH),
         "data_hash": artifact["data_hash"],
         "model_name": artifact["model_name"],
         "model_selection": artifact["model_selection"],
@@ -64,7 +107,7 @@ def main() -> None:
         "metrics": artifact["metrics"],
         "model_comparison": artifact["model_comparison"].to_dict("records"),
     }
-    METADATA_PATH.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+    write_json_atomically(METADATA_PATH, metadata)
 
     print(f"Saved model: {MODEL_PATH}")
     print(f"Saved metadata: {METADATA_PATH}")

@@ -594,7 +594,6 @@ data = _load_data()
 summary = core.get_dashboard_summary()
 figures = core.build_plotly_figures()
 default_profile = core.default_customer_profile()
-default_prediction = core.predict_churn(default_profile)
 
 with st.sidebar:
     st.markdown(
@@ -656,8 +655,8 @@ with left:
         <div class="html-panel">
             <div class="panel-heading">
                 <div>
-                    <span class="eyebrow">Population risk</span>
-                    <h3>Churn risk distribution</h3>
+                    <span class="eyebrow">Historical customer risk</span>
+                    <h3>Risk among non-churned customers</h3>
                 </div>
             </div>
         </div>
@@ -669,8 +668,10 @@ with left:
         width="stretch",
         config={"displayModeBar": False, "responsive": True},
     )
+    st.caption(summary["population_risk_note"])
 with right:
-    st.markdown(_decision_panel(default_prediction), unsafe_allow_html=True)
+    # Fill this after the form so both results use the same submitted profile.
+    decision_panel = st.empty()
 
 st.markdown("")
 signal_a, signal_b, signal_c = st.columns([0.36, 0.36, 0.28], gap="medium")
@@ -746,6 +747,7 @@ with st.form("customer_score"):
     st.form_submit_button("Score customer")
 
 prediction = core.predict_churn(profile)
+decision_panel.markdown(_decision_panel(prediction), unsafe_allow_html=True)
 score_cols = st.columns([0.22, 0.22, 0.56])
 score_cols[0].metric("Churn probability", prediction["probability_label"])
 score_cols[1].metric("Risk level", prediction["risk_level"])

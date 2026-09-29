@@ -1,29 +1,41 @@
 {
-  "artifact_version": 2,
-  "trained_at_utc": "2026-06-28T16:23:01.921201+00:00",
-  "sklearn_version": "1.7.2",
+  "artifact_version": 3,
+  "trained_at_utc": "2026-09-28T18:57:35.408856+00:00",
+  "sklearn_version": "1.9.1",
+  "runtime_environment": {
+    "python": "3.14.6",
+    "implementation": "CPython",
+    "joblib": "1.6.0",
+    "numpy": "2.5.3",
+    "pandas": "2.3.3",
+    "scikit_learn": "1.9.1"
+  },
+  "training_code_hash": "9c70e1c6a829cd8b42f3161ccf9a42e2059507db00e42fbc100e3d566fa70285",
+  "git_revision": "7559c962fa51dad5b2d602a9c9a4493662fe168c",
+  "training_run_id": "2bff9e7c1bf743d2bf05b8ca623d590c",
+  "artifact_sha256": "f16418a2f77077242d66d3f3ca10a1ce84e5540db3e6b532b1e53b66c08c8537",
   "data_hash": "88be4b93fbe0cc83421af1c503794c97c342eca914c1576db7c276e61d61358a",
   "model_name": "Random Forest",
   "model_selection": "Highest mean 5-fold training-set CV F1",
-  "decision_threshold": 0.2860109992501851,
+  "decision_threshold": 0.3118789772267921,
   "holdout_size": 1407,
   "metrics": {
-    "Accuracy": 0.7476901208244492,
-    "Precision": 0.516994633273703,
-    "Recall": 0.7727272727272727,
-    "F1-score": 0.6195069667738478,
-    "ROC-AUC": 0.8389458044944635,
-    "PR-AUC": 0.641825792562193,
-    "Brier score": 0.1389258747352999
+    "Accuracy": 0.7533759772565742,
+    "Precision": 0.5247706422018349,
+    "Recall": 0.7647058823529411,
+    "F1-score": 0.6224156692056583,
+    "ROC-AUC": 0.8384824844308929,
+    "PR-AUC": 0.6430649432828555,
+    "Brier score": 0.13919099203262714
   },
   "model_comparison": [
     {
       "Model": "Random Forest",
-      "Accuracy": 0.7630222222222223,
-      "Precision": 0.536862462251318,
-      "Recall": 0.788628762541806,
-      "F1-score": 0.6388192142292544,
-      "F1 std": 0.010593372975142751
+      "Accuracy": 0.7576888888888889,
+      "Precision": 0.5290729432727131,
+      "Recall": 0.802675585284281,
+      "F1-score": 0.6377493409899055,
+      "F1 std": 0.009570589965192727
     },
     {
       "Model": "Logistic Regression",

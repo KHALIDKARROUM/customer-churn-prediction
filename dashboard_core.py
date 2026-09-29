@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 from functools import lru_cache
 from pathlib import Path
 from typing import Any
@@ -11,12 +12,13 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 
-from model_training import ARTIFACT_VERSION, train_model_artifact
+from model_training import ARTIFACT_VERSION, runtime_environment
 
 
 BASE_DIR = Path(__file__).resolve().parent
 DATA_PATH = BASE_DIR / "Telco-Customer-Churn.csv"
 MODEL_PATH = BASE_DIR / "artifacts" / "churn_model.joblib"
+METADATA_PATH = BASE_DIR / "artifacts" / "model_metadata.json"
 
 RANDOM_STATE = 42
 
@@ -79,6 +81,42 @@ class CustomerProfileValidationError(ValueError):
     def __init__(self, errors: dict[str, str]):
         self.errors = errors
         super().__init__("; ".join(f"{field}: {message}" for field, message in errors.items()))
+
+
+class ModelArtifactUnavailableError(RuntimeError):
+    """Raised when this process cannot safely score with the saved model."""
+
+
+REQUIRED_ARTIFACT_KEYS = {
+    "artifact_version",
+    "trained_at_utc",
+    "sklearn_version",
+    "runtime_environment",
+    "training_code_hash",
+    "training_run_id",
+    "data_hash",
+    "model_name",
+    "pipeline",
+    "decision_threshold",
+    "metrics",
+    "confusion_matrix",
+    "model_comparison",
+    "feature_importance",
+    "grouped_importance",
+    "oof_probabilities",
+    "feature_fields",
+    "numeric_fields",
+    "categorical_fields",
+}
+
+REQUIRED_METADATA_KEYS = {
+    "artifact_version",
+    "artifact_sha256",
+    "runtime_environment",
+    "training_code_hash",
+    "training_run_id",
+    "data_hash",
+}
 
 
 def _percent(value: float) -> str:
@@ -185,28 +223,103 @@ def _data_hash() -> str:
 
 @lru_cache(maxsize=1)
 def get_model_artifacts() -> dict[str, Any]:
-    expected_hash = _data_hash()
-    if MODEL_PATH.exists():
-        try:
-            artifact = joblib.load(MODEL_PATH)
-            if (
-                artifact.get("artifact_version") == ARTIFACT_VERSION
-                and artifact.get("data_hash") == expected_hash
-                and artifact.get("feature_fields") == FEATURE_FIELDS
-            ):
-                return artifact
-        except (OSError, ValueError, TypeError, KeyError):
-            pass
+    """Load only a complete artifact that matches this data and runtime."""
+    if not MODEL_PATH.exists():
+        raise ModelArtifactUnavailableError(
+            "The trained model artifact is missing. Run 'python train_model.py' before starting the dashboard."
+        )
+    if not METADATA_PATH.exists():
+        raise ModelArtifactUnavailableError(
+            "The model metadata file is missing. Run 'python train_model.py' to rebuild the artifact."
+        )
 
-    # Keep local development usable before train_model.py has been run. The
-    # generated artifact should be used in deployment to avoid startup work.
-    return train_model_artifact(
-        load_customer_data(),
-        FEATURE_FIELDS,
-        NUMERIC_FIELDS,
-        random_state=RANDOM_STATE,
-        data_hash=expected_hash,
-    )
+    try:
+        metadata = json.loads(METADATA_PATH.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise ModelArtifactUnavailableError(
+            "The model metadata cannot be read. Run 'python train_model.py' to rebuild the artifact."
+        ) from exc
+
+    missing_metadata = REQUIRED_METADATA_KEYS.difference(metadata)
+    if missing_metadata:
+        raise ModelArtifactUnavailableError(
+            "The model metadata is incomplete: " + ", ".join(sorted(missing_metadata)) + ". Rebuild the artifact."
+        )
+
+    try:
+        file_hash = hashlib.sha256(MODEL_PATH.read_bytes()).hexdigest()
+    except OSError as exc:
+        raise ModelArtifactUnavailableError(
+            "The model artifact cannot be read. Run 'python train_model.py' to rebuild it."
+        ) from exc
+    if metadata["artifact_sha256"] != file_hash:
+        raise ModelArtifactUnavailableError(
+            "The model artifact does not match its metadata. Run 'python train_model.py' to rebuild it."
+        )
+
+    try:
+        artifact = joblib.load(MODEL_PATH)
+    except Exception as exc:
+        raise ModelArtifactUnavailableError(
+            "The model artifact cannot be loaded. Run 'python train_model.py' to rebuild it."
+        ) from exc
+
+    if not isinstance(artifact, dict):
+        raise ModelArtifactUnavailableError("The model artifact has an invalid format. Rebuild the artifact.")
+
+    missing_artifact = REQUIRED_ARTIFACT_KEYS.difference(artifact)
+    if missing_artifact:
+        raise ModelArtifactUnavailableError(
+            "The model artifact is incomplete: " + ", ".join(sorted(missing_artifact)) + ". Rebuild the artifact."
+        )
+
+    expected_runtime = runtime_environment()
+    artifact_runtime = artifact["runtime_environment"]
+    validation_errors = []
+    if artifact["artifact_version"] != ARTIFACT_VERSION:
+        validation_errors.append("artifact version")
+    if metadata["artifact_version"] != artifact["artifact_version"]:
+        validation_errors.append("metadata version")
+    if artifact["data_hash"] != _data_hash() or metadata["data_hash"] != artifact["data_hash"]:
+        validation_errors.append("training data hash")
+    if artifact["feature_fields"] != FEATURE_FIELDS:
+        validation_errors.append("feature fields")
+    if artifact["numeric_fields"] != NUMERIC_FIELDS:
+        validation_errors.append("numeric fields")
+    expected_categorical = [field for field in FEATURE_FIELDS if field not in NUMERIC_FIELDS]
+    if artifact["categorical_fields"] != expected_categorical:
+        validation_errors.append("categorical fields")
+    if not isinstance(artifact_runtime, dict):
+        validation_errors.append("runtime package versions")
+    else:
+        artifact_python = str(artifact_runtime.get("python", "")).rsplit(".", maxsplit=1)[0]
+        current_python = str(expected_runtime["python"]).rsplit(".", maxsplit=1)[0]
+        expected_packages = {key: value for key, value in expected_runtime.items() if key != "python"}
+        artifact_packages = {key: value for key, value in artifact_runtime.items() if key != "python"}
+        if artifact_python != current_python or artifact_packages != expected_packages:
+            validation_errors.append("runtime package versions")
+    if artifact["sklearn_version"] != expected_runtime["scikit_learn"]:
+        validation_errors.append("runtime package versions")
+    if metadata["runtime_environment"] != artifact_runtime:
+        validation_errors.append("metadata runtime versions")
+    if metadata["training_code_hash"] != artifact["training_code_hash"]:
+        validation_errors.append("training code metadata")
+    if metadata["training_run_id"] != artifact["training_run_id"]:
+        validation_errors.append("training run metadata")
+    if not hasattr(artifact["pipeline"], "predict_proba"):
+        validation_errors.append("prediction pipeline")
+    try:
+        threshold = float(artifact["decision_threshold"])
+        if not np.isfinite(threshold) or not 0 < threshold < 1:
+            validation_errors.append("decision threshold")
+    except (TypeError, ValueError):
+        validation_errors.append("decision threshold")
+    if validation_errors:
+        raise ModelArtifactUnavailableError(
+            "The model artifact is incompatible (" + ", ".join(validation_errors) + "). "
+            "Run 'python train_model.py' in this environment to rebuild it."
+        )
+    return artifact
 
 
 @lru_cache(maxsize=1)
@@ -221,11 +334,14 @@ def _customer_scores_cached() -> pd.DataFrame:
             data[FEATURE_FIELDS]
         )[:, 1]
     moderate_threshold, high_threshold = _risk_thresholds(artifacts)
-    data["RiskBand"] = pd.cut(
-        data["RiskScore"],
-        bins=[0, moderate_threshold, high_threshold, 1],
-        labels=["Low", "Moderate", "High"],
-        include_lowest=True,
+    data["RiskBand"] = pd.Categorical(
+        np.select(
+            [data["RiskScore"] >= high_threshold, data["RiskScore"] >= moderate_threshold],
+            ["High", "Moderate"],
+            default="Low",
+        ),
+        categories=["Low", "Moderate", "High"],
+        ordered=True,
     )
     return data
 
@@ -261,7 +377,9 @@ def get_dashboard_summary() -> dict[str, Any]:
     churned = data[data["Churn"] == "Yes"]
     retained = data[data["Churn"] == "No"]
     _, high_risk_threshold = _risk_thresholds(artifacts)
-    at_risk = scored[scored["RiskScore"] >= high_risk_threshold]
+    eligible = scored[scored["Churn"] == "No"]
+    at_risk = eligible[eligible["RiskScore"] >= high_risk_threshold]
+    at_risk_fraction = len(at_risk) / len(eligible) if len(eligible) else 0.0
     accuracy = artifacts["metrics"]["Accuracy"]
     model_name = str(artifacts["model_name"])
     majority_baseline = data["Churn"].value_counts(normalize=True).max()
@@ -297,9 +415,9 @@ def get_dashboard_summary() -> dict[str, Any]:
             "accent": "coral",
         },
         {
-            "label": "Customers at risk",
+            "label": "Non-churned customers at risk",
             "value": _format_number(len(at_risk)),
-            "detail": f"{_percent(len(at_risk) / len(scored))} scored high risk",
+            "detail": f"{_percent(at_risk_fraction)} of recorded non-churners",
             "accent": "cyan",
         },
         {
@@ -398,96 +516,81 @@ def get_dashboard_summary() -> dict[str, Any]:
         "confusion_matrix": artifacts["confusion_matrix"].tolist(),
         "model_name": model_name,
         "decision_threshold": artifacts["decision_threshold"],
+        "population_risk_note": (
+            f"Historical sample: {_format_number(len(eligible))} customers recorded as not churned. "
+            f"High risk means a model score of at least {_percent(high_risk_threshold)}. "
+            "Scores have no defined future prediction window."
+        ),
     }
+
+
+def _build_risk_curve(scores: pd.Series, high_risk_threshold: float) -> go.Figure:
+    """Plot exact score ranks so the shaded share matches the high-risk count."""
+    ranked_scores = np.sort(scores.to_numpy(dtype=float))
+    risk_curve = go.Figure()
+    if ranked_scores.size:
+        # Each customer occupies an equal percentile interval. A step curve
+        # preserves threshold ties without smoothing or averaging across them.
+        risk_curve.add_trace(
+            go.Scatter(
+                x=np.arange(ranked_scores.size + 1) * 100 / ranked_scores.size,
+                y=np.append(ranked_scores, ranked_scores[-1]),
+                mode="lines",
+                line=dict(color=MISSION_COLORS["cyan"], width=3, shape="hv"),
+                fill="tozeroy",
+                fillcolor="rgba(37, 99, 235, 0.08)",
+                hovertemplate="Customer percentile %{x:.1f}<br>Model score %{y:.1%}<extra></extra>",
+                name="Score",
+            )
+        )
+        high_count = int(np.count_nonzero(ranked_scores >= high_risk_threshold))
+        if high_count:
+            risk_curve.add_vrect(
+                x0=100 * (ranked_scores.size - high_count) / ranked_scores.size,
+                x1=100,
+                fillcolor=MISSION_COLORS["coral"],
+                opacity=0.14,
+                line_width=0,
+                layer="below",
+            )
+    else:
+        risk_curve.add_annotation(
+            x=0.5, y=0.5, xref="paper", yref="paper", showarrow=False,
+            text="No non-churned customers available",
+        )
+
+    risk_curve.add_hline(
+        y=high_risk_threshold,
+        line_dash="dot",
+        line_color=MISSION_COLORS["coral"],
+        annotation_text=f"High risk: score at least {_percent(high_risk_threshold)}",
+        annotation_position="top left",
+        exclude_empty_subplots=False,
+    )
+    risk_curve.update_xaxes(
+        range=[0, 100],
+        tickmode="array",
+        tickvals=[0, 50, 100],
+        ticktext=["0%", "50%", "100%"],
+        title="Non-churned customers ranked by score",
+    )
+    risk_curve.update_yaxes(range=[0, 1], tickformat=".0%", title="Model score")
+    return _darken_figure(
+        risk_curve,
+        "",
+        470,
+        margin=dict(l=64, r=24, t=32, b=64),
+    )
 
 
 def build_plotly_figures() -> dict[str, go.Figure]:
     data = load_customer_data()
     scored = score_customer_population()
     artifacts = get_model_artifacts()
-    model_name = str(artifacts["model_name"])
-
-    ranked_scores = scored.sort_values("RiskScore").reset_index(drop=True)
-    ranked_scores["Bucket"] = pd.qcut(
-        ranked_scores.index + 1,
-        q=min(80, len(ranked_scores)),
-        labels=False,
-    )
-    risk_curve_data = (
-        ranked_scores.groupby("Bucket", as_index=False)
-        .agg(RiskScore=("RiskScore", "mean"), Customers=("customerID", "size"))
-        .reset_index(drop=True)
-    )
-    risk_curve_data["Position"] = np.linspace(0, 100, len(risk_curve_data))
-    marker_indexes = [
-        (risk_curve_data["Position"] - target).abs().idxmin()
-        for target in [72, 88]
-    ]
-    marker_points = risk_curve_data.loc[marker_indexes].drop_duplicates("Bucket")
-
-    risk_curve = go.Figure()
-    risk_curve.add_vrect(
-        x0=72,
-        x1=100,
-        fillcolor=MISSION_COLORS["coral"],
-        opacity=0.14,
-        line_width=0,
-    )
-    risk_curve.add_trace(
-        go.Scatter(
-            x=risk_curve_data["Position"],
-            y=risk_curve_data["RiskScore"],
-            mode="lines",
-            line=dict(
-                color=MISSION_COLORS["cyan"],
-                width=5,
-                shape="spline",
-                smoothing=1.25,
-            ),
-            fill="tozeroy",
-            fillcolor="rgba(37, 99, 235, 0.08)",
-            hovertemplate="Population rank %{x:.0f}<br>Risk probability %{y:.1%}<extra></extra>",
-            name="Score",
-        )
-    )
-    risk_curve.add_trace(
-        go.Scatter(
-            x=marker_points["Position"],
-            y=marker_points["RiskScore"],
-            mode="markers",
-            marker=dict(
-                color=MISSION_COLORS["coral"],
-                line=dict(color="#ffffff", width=2),
-                size=14,
-            ),
-            hovertemplate="Risk probability %{y:.1%}<extra></extra>",
-            name="High-risk markers",
-            showlegend=False,
-        )
-    )
-    risk_curve.add_annotation(
-        x=85,
-        y=max(0.52, float(marker_points["RiskScore"].max()) + 0.06),
-        text="High risk zone",
-        showarrow=False,
-        font=dict(color=MISSION_COLORS["coral"], size=11),
-        bgcolor="rgba(232, 93, 117, 0.10)",
-        bordercolor="rgba(232, 93, 117, 0.25)",
-        borderwidth=1,
-    )
-    risk_curve.update_xaxes(
-        range=[0, 100],
-        tickmode="array",
-        tickvals=[0, 50, 100],
-        ticktext=["Low risk", "Avg risk", "High risk"],
-        title="",
-    )
-    risk_curve.update_yaxes(range=[0, 1], tickformat=".0%", title="")
-    _darken_figure(
-        risk_curve,
-        "",
-        470,
-        margin=dict(l=48, r=24, t=32, b=48),
+    _, high_risk_threshold = _risk_thresholds(artifacts)
+    risk_curve = _build_risk_curve(
+        scored.loc[scored["Churn"] == "No", "RiskScore"],
+        high_risk_threshold,
     )
 
     churn_counts = (
@@ -564,33 +667,6 @@ def build_plotly_figures() -> dict[str, go.Figure]:
         margin=dict(l=36, r=20, t=54, b=46),
     )
 
-    top_features = artifacts["grouped_importance"].head(10).copy()
-    top_features["DisplayName"] = top_features["OriginalFeature"].map(
-        _feature_display_name
-    )
-    top_features = top_features.sort_values("Importance")
-    drivers = px.bar(
-        top_features,
-        x="Importance",
-        y="DisplayName",
-        orientation="h",
-        color="Importance",
-        color_continuous_scale=[
-            MISSION_COLORS["cyan"],
-            MISSION_COLORS["teal"],
-            MISSION_COLORS["coral"],
-        ],
-    )
-    drivers.update_xaxes(title="Feature importance")
-    drivers.update_yaxes(title="")
-    _darken_figure(
-        drivers,
-        f"Top churn drivers - {model_name}",
-        height=390,
-        margin=dict(l=40, r=20, t=54, b=42),
-    )
-    drivers.update_layout(coloraxis_showscale=False)
-
     comparison = get_model_comparison()
     comparison_fig = px.bar(
         comparison.sort_values("F1-score", ascending=True),
@@ -614,64 +690,24 @@ def build_plotly_figures() -> dict[str, go.Figure]:
     )
     comparison_fig.update_layout(coloraxis_showscale=False)
 
-    corr_source = scored.assign(
-        ChurnBinary=(scored["Churn"] == "Yes").astype(int)
-    )[
-        [
-            "tenure",
-            "MonthlyCharges",
-            "TotalCharges",
-            "SeniorCitizen",
-            "RiskScore",
-            "ChurnBinary",
-        ]
-    ]
-    corr = corr_source.corr()
-    corr_labels = [
-        "Tenure",
-        "Monthly",
-        "Total",
-        "Senior",
-        "Risk",
-        "Churn",
-    ]
-    correlation = go.Figure(
-        data=go.Heatmap(
-            z=corr.values,
-            x=corr_labels,
-            y=corr_labels,
-            zmin=-1,
-            zmax=1,
-            colorscale=[
-                [0, MISSION_COLORS["coral"]],
-                [0.5, "#ffffff"],
-                [1, MISSION_COLORS["teal"]],
-            ],
-            colorbar=dict(
-                thickness=10,
-                len=0.75,
-                tickfont=dict(color=MISSION_COLORS["muted"], size=10),
-            ),
-            hovertemplate="%{y} vs %{x}<br>Correlation %{z:.2f}<extra></extra>",
-        )
-    )
-    correlation.update_yaxes(autorange="reversed")
-    _darken_figure(
-        correlation,
-        "",
-        320,
-        margin=dict(l=62, r=20, t=24, b=54),
-    )
-
     return {
         "risk_curve": risk_curve,
         "distribution": distribution,
         "by_contract": by_contract,
         "by_tenure": by_tenure,
-        "drivers": drivers,
         "comparison": comparison_fig,
-        "correlation": correlation,
     }
+
+
+@lru_cache(maxsize=1)
+def _dashboard_figures_cached(data_hash: str, training_run_id: str) -> dict[str, go.Figure]:
+    """Reuse analytical figures until the deployed data or model changes."""
+    return build_plotly_figures()
+
+
+def get_dashboard_figures() -> dict[str, go.Figure]:
+    artifacts = get_model_artifacts()
+    return _dashboard_figures_cached(_data_hash(), str(artifacts["training_run_id"]))
 
 
 def default_customer_profile() -> dict[str, Any]:
@@ -684,7 +720,11 @@ def default_customer_profile() -> dict[str, Any]:
     return coerce_customer_profile({field: row[field] for field in FEATURE_FIELDS})
 
 
-def coerce_customer_profile(profile: dict[str, Any]) -> dict[str, Any]:
+def coerce_customer_profile(
+    profile: dict[str, Any],
+    *,
+    fill_defaults: bool = True,
+) -> dict[str, Any]:
     defaults = {
         "tenure": 1,
         "InternetService": "Fiber optic",
@@ -693,13 +733,16 @@ def coerce_customer_profile(profile: dict[str, Any]) -> dict[str, Any]:
         "MonthlyCharges": 80.0,
         "TotalCharges": 80.0,
     }
-    merged = {**defaults, **profile}
+    merged = {**defaults, **profile} if fill_defaults else profile
     coerced: dict[str, Any] = {}
     errors: dict[str, str] = {}
     data = _clean_data_cached()
 
     for field in FEATURE_FIELDS:
-        value = merged[field]
+        value = merged.get(field)
+        if value is None or (isinstance(value, str) and not value.strip()):
+            errors[field] = "is required"
+            continue
         if field in NUMERIC_FIELDS:
             try:
                 number = float(value)
@@ -735,9 +778,13 @@ def coerce_customer_profile(profile: dict[str, Any]) -> dict[str, Any]:
     return coerced
 
 
-def field_definitions(profile: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+def field_definitions(
+    profile: dict[str, Any] | None = None,
+    errors: dict[str, str] | None = None,
+) -> list[dict[str, Any]]:
     data = load_customer_data()
-    profile = coerce_customer_profile(profile or default_customer_profile())
+    values = profile if profile is not None else default_customer_profile()
+    errors = errors or {}
     fields = []
 
     for field in FEATURE_FIELDS:
@@ -748,23 +795,33 @@ def field_definitions(profile: dict[str, Any] | None = None) -> list[dict[str, A
                     "name": field,
                     "label": FIELD_LABELS[field],
                     "type": "number",
-                    "value": profile[field],
+                    "value": values.get(field, ""),
+                    "error": errors.get(field),
                     **limits,
                 }
             )
             continue
 
         options = sorted(data[field].dropna().astype(str).unique().tolist())
+        selected_value = str(values.get(field, "")).strip()
+        if selected_value and selected_value not in options:
+            options.insert(0, selected_value)
         fields.append(
             {
                 "name": field,
                 "label": FIELD_LABELS[field],
                 "type": "select",
-                "value": profile[field],
+                "value": selected_value,
+                "error": errors.get(field),
                 "options": [
                     {
                         "value": option,
-                        "selected": option == str(profile[field]),
+                        "label": (
+                            f"{option} (unrecognized value)"
+                            if option == selected_value and option not in set(data[field].dropna().astype(str))
+                            else option
+                        ),
+                        "selected": option == selected_value,
                     }
                     for option in options
                 ],
@@ -824,14 +881,13 @@ def retention_actions(profile: dict[str, Any], probability: float) -> list[str]:
     return actions[:4]
 
 
-def profile_from_mapping(values: dict[str, Any]) -> dict[str, Any]:
-    profile: dict[str, Any] = {}
-    defaults = default_customer_profile()
+def raw_profile_from_mapping(values: Any) -> dict[str, Any]:
+    """Keep every submitted value available for redisplay after validation fails."""
+    return {field: values.get(field, "") for field in FEATURE_FIELDS}
 
-    for field in FEATURE_FIELDS:
-        profile[field] = values.get(field, defaults[field])
 
-    return coerce_customer_profile(profile)
+def profile_from_mapping(values: Any) -> dict[str, Any]:
+    return coerce_customer_profile(raw_profile_from_mapping(values), fill_defaults=False)
 
 
 def sample_records(limit: int = 25) -> list[dict[str, Any]]:

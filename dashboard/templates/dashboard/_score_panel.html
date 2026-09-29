@@ -1,0 +1,52 @@
+<section id="score" class="panel simulator-panel" aria-labelledby="score-title">
+    <div class="panel-heading">
+        <div>
+            <span class="eyebrow">Customer score</span>
+            <h2 id="score-title">Retention action simulator</h2>
+        </div>
+    </div>
+    {% if form_errors %}
+    <p class="form-error" role="alert">Correct the highlighted fields to score this customer.</p>
+    {% endif %}
+    <form method="post" action="{% url 'dashboard:score' %}" class="customer-form" data-score-form novalidate>
+        {% csrf_token %}
+        {% for field in form_fields %}
+        <label class="field field-{{ field.type }}{% if field.error %} has-error{% endif %}">
+            <span>{{ field.label }}</span>
+            {% if field.type == "select" %}
+                <select name="{{ field.name }}" {% if field.error %}aria-invalid="true" aria-describedby="{{ field.name }}-error"{% endif %} required>
+                    <option value="" {% if not field.value %}selected{% endif %} disabled>Select an option</option>
+                    {% for option in field.options %}
+                    <option value="{{ option.value }}" {% if option.selected %}selected{% endif %}>{{ option.label }}</option>
+                    {% endfor %}
+                </select>
+            {% elif field.error %}
+                <input type="text" inputmode="decimal" name="{{ field.name }}" value="{{ field.value }}" aria-invalid="true" aria-describedby="{{ field.name }}-error" required>
+            {% else %}
+                <input type="number" name="{{ field.name }}" min="{{ field.min }}" max="{{ field.max }}" step="{{ field.step }}" value="{{ field.value }}" {% if field.error %}aria-invalid="true" aria-describedby="{{ field.name }}-error"{% endif %} required>
+            {% endif %}
+            {% if field.error %}<small id="{{ field.name }}-error" class="field-error">{{ field.error }}</small>{% endif %}
+        </label>
+        {% endfor %}
+        <button type="submit">Score customer</button>
+    </form>
+    <div class="score-output" aria-live="polite">
+        {% if prediction %}
+        <div class="score-result {{ prediction.risk_class }}">
+            <span>{{ prediction.risk_level }} risk</span>
+            <strong>{{ prediction.probability_label }}</strong>
+            <p>{{ prediction.prediction }}</p>
+        </div>
+        <div class="score-actions">
+            <h3>Suggested follow-up</h3>
+            <ul class="action-list">
+                {% for action in prediction.actions %}<li>{{ action }}</li>{% endfor %}
+            </ul>
+        </div>
+        {% elif form_errors %}
+        <p class="score-pending">No score was created because one or more fields need correction.</p>
+        {% else %}
+        <p class="score-pending">Complete the fields and select <strong>Score customer</strong> to create a prediction.</p>
+        {% endif %}
+    </div>
+</section>

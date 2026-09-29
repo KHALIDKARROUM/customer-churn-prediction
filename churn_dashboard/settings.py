@@ -1,6 +1,7 @@
 import os
 from pathlib import Path
 
+import plotly
 from django.core.exceptions import ImproperlyConfigured
 
 
@@ -29,6 +30,7 @@ INSTALLED_APPS = [
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
+    "whitenoise.middleware.WhiteNoiseMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
@@ -59,6 +61,21 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+# The packaged Plotly bundle is collected and served once as a cacheable asset,
+# instead of being repeated in every rendered chart response.
+STATICFILES_DIRS = [
+    ("plotly", Path(plotly.__file__).resolve().parent / "package_data"),
+]
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {
+        "BACKEND": (
+            "django.contrib.staticfiles.storage.StaticFilesStorage"
+            if DEBUG
+            else "whitenoise.storage.CompressedManifestStaticFilesStorage"
+        ),
+    },
+}
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 if not DEBUG:
@@ -68,4 +85,8 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31_536_000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+    # Enable only behind a proxy that replaces the client-supplied header.
+    if os.getenv("DJANGO_TRUST_PROXY_HEADERS", "false").strip().lower() in {
+        "1", "true", "yes",
+    }:
+        SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")

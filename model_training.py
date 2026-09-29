@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import platform
 from typing import Any
 
+import joblib
 import numpy as np
 import pandas as pd
 import sklearn
@@ -28,7 +30,19 @@ from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import MinMaxScaler, OneHotEncoder
 
 
-ARTIFACT_VERSION = 2
+ARTIFACT_VERSION = 3
+
+
+def runtime_environment() -> dict[str, str]:
+    """Return the versions that must match when the artifact is loaded."""
+    return {
+        "python": platform.python_version(),
+        "implementation": platform.python_implementation(),
+        "joblib": joblib.__version__,
+        "numpy": np.__version__,
+        "pandas": pd.__version__,
+        "scikit_learn": sklearn.__version__,
+    }
 
 
 def build_pipeline(
@@ -165,6 +179,9 @@ def train_model_artifact(
     numeric_fields: list[str],
     random_state: int = 42,
     data_hash: str | None = None,
+    training_code_hash: str | None = None,
+    git_revision: str | None = None,
+    training_run_id: str | None = None,
 ) -> dict[str, Any]:
     """Select on training CV, evaluate once on holdout, and fit production model."""
     categorical_fields = [field for field in feature_fields if field not in numeric_fields]
@@ -258,6 +275,10 @@ def train_model_artifact(
         "artifact_version": ARTIFACT_VERSION,
         "trained_at_utc": datetime.now(timezone.utc).isoformat(),
         "sklearn_version": sklearn.__version__,
+        "runtime_environment": runtime_environment(),
+        "training_code_hash": training_code_hash,
+        "git_revision": git_revision,
+        "training_run_id": training_run_id,
         "data_hash": data_hash,
         "model_name": model_name,
         "model_selection": "Highest mean 5-fold training-set CV F1",
